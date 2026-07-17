@@ -122,6 +122,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
     } else if (text) {
       // ── User sent text — check if it's a number reply to our menu ───────
       const session = require('./services/session').getSession(from);
+      console.log(`[webhook] session lookup for ${from}:`, session ? `found type=${session.detectedType}` : 'NOT FOUND');
       if (session && /^[1-9]$/.test(text)) {
         const options = getConversionOptions(session.detectedType);
         const idx = parseInt(text, 10) - 1;
@@ -216,7 +217,7 @@ async function handleIncomingMedia(from, mediaUrl, _twilioMimeHint) {
 // ─── Handler: button tap ──────────────────────────────────────────────────────
 
 async function handleButtonReply(from, buttonId) {
-  // 1. Retrieve pending session
+  console.log(`[handleButtonReply] from=${from} buttonId=${buttonId}`);
   const session = getSession(from);
   if (!session) {
     await sendText(
