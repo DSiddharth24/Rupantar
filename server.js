@@ -99,6 +99,10 @@ app.post('/webhook/whatsapp', async (req, res) => {
   res.send('<Response></Response>');
 
   const body = req.body;
+
+  // Log the full incoming payload so we can see exactly what Twilio is sending
+  console.log('[webhook] Incoming payload:', JSON.stringify(body, null, 2));
+
   const from = normalisePhone(body.From);
 
   if (!from) {
@@ -107,8 +111,10 @@ app.post('/webhook/whatsapp', async (req, res) => {
   }
 
   try {
-    const numMedia    = parseInt(body.NumMedia || '0', 10);
+    const numMedia      = parseInt(body.NumMedia || '0', 10);
     const buttonPayload = body.ButtonPayload; // set on quick-reply tap
+
+    console.log(`[webhook] From=${from} NumMedia=${numMedia} ButtonPayload=${buttonPayload || 'none'}`);
 
     if (buttonPayload) {
       // ── Branch: user tapped a format-choice button ──────────────────────
@@ -133,6 +139,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
 // ─── Handler: incoming media ──────────────────────────────────────────────────
 
 async function handleIncomingMedia(from, mediaUrl, _twilioMimeHint) {
+  console.log(`[handleIncomingMedia] from=${from} mediaUrl=${mediaUrl}`);
   if (!mediaUrl) {
     await sendText(from, "I couldn't retrieve your file. Please try sending it again.");
     return;
@@ -164,6 +171,7 @@ async function handleIncomingMedia(from, mediaUrl, _twilioMimeHint) {
 
   // 3. Detect real file type via magic bytes (never trust MIME headers)
   const detectedType = await detectFileType(buffer);
+  console.log(`[handleIncomingMedia] detectedType=${detectedType} bufferSize=${buffer.length}`);
   if (!detectedType) {
     buffer = null;
     await sendText(
@@ -187,7 +195,14 @@ async function handleIncomingMedia(from, mediaUrl, _twilioMimeHint) {
 
   // 6. Reply with interactive format-choice buttons
   const promptText = formatPromptText(detectedType);
-  await sendButtons(from, promptText, options, detectedType);
+  console.log(`[handleIncomingMedia] sending buttons to ${from}: ${promptText}`);
+  try {
+    await sendButtons(from, promptText, options, detectedType);
+    console.log(`[handleIncomingMedia] buttons sent OK to ${from}`);
+  } catch (err) {
+    console.error(`[handleIncomingMedia] sendButtons failed:`, err.message, err.stack);
+    await sendText(from, `Got it — reply with the number of your desired format:\n${options.map((o,i)=>`${i+1}. ${o.title}`).join('\n')}`);
+  }
 }
 
 // ─── Handler: button tap ──────────────────────────────────────────────────────

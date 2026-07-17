@@ -1,19 +1,17 @@
-version: '3.9'
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Rupantar — docker-compose.yml
 #
 # Services:
-#   gotenberg  — LibreOffice-based document conversion engine
-#   app        — the Node.js Express bot (optional: run locally with `npm start`
-#                and point GOTENBERG_URL at the container instead)
+#   gotenberg   — Office → PDF conversion (LibreOffice headless via Gotenberg)
+#   pdf2docx    — PDF → DOCX conversion (pdf2docx-plus FastAPI sidecar)
+#   app         — Node.js Express bot
 #
-# Usage (local dev):
-#   docker compose up gotenberg          # just the conversion engine
-#   npm run dev                          # run the bot locally against it
+# Usage (local dev — run bot outside Docker):
+#   docker compose up gotenberg pdf2docx   # start just the two conversion engines
+#   npm run dev                            # run the bot locally
 #
-# Usage (full stack):
-#   docker compose up --build            # bot + gotenberg together
+# Usage (full stack in Docker):
+#   docker compose up --build
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -52,9 +50,12 @@ services:
       - TWILIO_WHATSAPP_NUMBER=${TWILIO_WHATSAPP_NUMBER}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
       - GOTENBERG_URL=http://gotenberg:3000
+      - PDF2DOCX_URL=http://pdf2docx:8000
       - REDIS_URL=${REDIS_URL:-}
     depends_on:
       gotenberg:
+        condition: service_healthy
+      pdf2docx:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
@@ -62,6 +63,29 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
+
+  # ── pdf2docx-plus — PDF → DOCX sidecar ───────────────────────────────────
+  # Runs the pdf2docx-plus built-in FastAPI REST server.
+  # Accepts: POST /convert  multipart file → DOCX bytes
+  # Health:  GET  /healthz  → {"status":"ok"}
+  #
+  # This is the only backend that can produce proper DOCX output from a PDF.
+  # Gotenberg (LibreOffice) is intentionally NOT used for this direction —
+  # LibreOffice produces corrupted DOCX when given PDF input.
+  pdf2docx:
+    build:
+      context: .
+      dockerfile: Dockerfile.pdf2docx
+    restart: unless-stopped
+    ports:
+      - "8001:8000"   # exposed on 8001 so it doesn't clash with other services
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # ── Redis (optional — only needed if you switch session.js to use Redis) ───
   # Uncomment this block and set REDIS_URL=redis://redis:6379 in your .env
