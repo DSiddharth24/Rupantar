@@ -111,22 +111,16 @@ app.post('/webhook/whatsapp', async (req, res) => {
   }
 
   try {
-    const numMedia      = parseInt(body.NumMedia || '0', 10);
-    const buttonPayload = body.ButtonPayload; // set on quick-reply tap
+    const numMedia = parseInt(body.NumMedia || '0', 10);
+    const text     = (body.Body || '').trim();
 
-    console.log(`[webhook] From=${from} NumMedia=${numMedia} ButtonPayload=${buttonPayload || 'none'}`);
+    console.log(`[webhook] From=${from} NumMedia=${numMedia} Body="${text}"`);
 
-    if (buttonPayload) {
-      // ── Branch: user tapped a format-choice button ──────────────────────
-      await handleButtonReply(from, buttonPayload.trim());
-    } else if (numMedia > 0) {
-      // ── Branch: user sent a file ─────────────────────────────────────────
+    if (numMedia > 0) {
+      // ── User sent a file ────────────────────────────────────────────────
       await handleIncomingMedia(from, body.MediaUrl0, body.MediaContentType0);
-    } else if (body.Body) {
-      // ── Branch: plain text ───────────────────────────────────────────────
-      // Check if this looks like a fallback number reply (e.g. "1", "2", "3")
-      // used when the Content API buttons couldn't be sent.
-      const text = body.Body.trim();
+    } else if (text) {
+      // ── User sent text — check if it's a number reply to our menu ───────
       const session = require('./services/session').getSession(from);
       if (session && /^[1-9]$/.test(text)) {
         const options = getConversionOptions(session.detectedType);
@@ -137,14 +131,11 @@ app.post('/webhook/whatsapp', async (req, res) => {
           await sendText(from, `Please reply with a number between 1 and ${options.length}.`);
         }
       } else {
-        // Generic onboarding prompt
         await sendText(
           from,
           "Hi, I'm Rupantar 👋 — send me a Word, Excel, PowerPoint, or PDF file and I'll convert it for you."
         );
       }
-    } else {
-      // No media, no text, no button — ignore silently
     }
   } catch (err) {
     console.error(`[webhook] Unhandled error for ${from}:`, err.message);
