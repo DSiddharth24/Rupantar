@@ -122,12 +122,29 @@ app.post('/webhook/whatsapp', async (req, res) => {
     } else if (numMedia > 0) {
       // ── Branch: user sent a file ─────────────────────────────────────────
       await handleIncomingMedia(from, body.MediaUrl0, body.MediaContentType0);
+    } else if (body.Body) {
+      // ── Branch: plain text ───────────────────────────────────────────────
+      // Check if this looks like a fallback number reply (e.g. "1", "2", "3")
+      // used when the Content API buttons couldn't be sent.
+      const text = body.Body.trim();
+      const session = require('./services/session').getSession(from);
+      if (session && /^[1-9]$/.test(text)) {
+        const options = getConversionOptions(session.detectedType);
+        const idx = parseInt(text, 10) - 1;
+        if (idx >= 0 && idx < options.length) {
+          await handleButtonReply(from, options[idx].id);
+        } else {
+          await sendText(from, `Please reply with a number between 1 and ${options.length}.`);
+        }
+      } else {
+        // Generic onboarding prompt
+        await sendText(
+          from,
+          "Hi, I'm Rupantar 👋 — send me a Word, Excel, PowerPoint, or PDF file and I'll convert it for you."
+        );
+      }
     } else {
-      // ── Branch: plain text or unknown — send onboarding prompt ───────────
-      await sendText(
-        from,
-        "Hi, I'm Rupantar 👋 — send me a Word, Excel, PowerPoint, or PDF file and I'll convert it for you."
-      );
+      // No media, no text, no button — ignore silently
     }
   } catch (err) {
     console.error(`[webhook] Unhandled error for ${from}:`, err.message);

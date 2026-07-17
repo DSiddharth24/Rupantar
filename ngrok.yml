@@ -1,0 +1,15 @@
+# ngrok config for Rupantar
+# Usage: ngrok start rupantar --config ngrok.yml
+#
+# This config injects the ngrok-skip-browser-warning header into all
+# incoming requests so Twilio bypasses the free-tier interstitial page.
+
+version: "3"
+
+tunnels:
+  rupantar:
+    proto: http
+    addr: 3001
+    request_header:
+      add:
+        - "ngrok-skip-browser-warning:true"
