@@ -9,6 +9,7 @@ RUN npm ci --omit=dev
 # Copy application source
 COPY . .
 
-EXPOSE 3001
+# Railway injects $PORT at runtime — we don't hardcode it here
+EXPOSE 8080
 
 CMD ["node", "server.js"]
