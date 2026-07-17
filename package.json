@@ -1,0 +1,24 @@
+{
+  "name": "rupantar",
+  "version": "1.0.0",
+  "description": "Rupantar — WhatsApp file converter bot. Zero persistent storage.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "axios": "1.18.1",
+    "express": "4.22.2",
+    "file-type": "22.0.1",
+    "form-data": "4.0.6",
+    "twilio": "5.2.0",
+    "dotenv": "16.4.5"
+  },
+  "devDependencies": {
+    "nodemon": "3.1.3"
+  }
+}

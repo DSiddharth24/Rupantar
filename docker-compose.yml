@@ -1,0 +1,87 @@
+version: '3.9'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rupantar — docker-compose.yml
+#
+# Services:
+#   gotenberg  — LibreOffice-based document conversion engine
+#   app        — the Node.js Express bot (optional: run locally with `npm start`
+#                and point GOTENBERG_URL at the container instead)
+#
+# Usage (local dev):
+#   docker compose up gotenberg          # just the conversion engine
+#   npm run dev                          # run the bot locally against it
+#
+# Usage (full stack):
+#   docker compose up --build            # bot + gotenberg together
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Gotenberg ───────────────────────────────────────────────────────────────
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    command:
+      # Disable unused routes to reduce attack surface
+      - "gotenberg"
+      - "--api-port=3000"
+      - "--api-timeout=300s"
+      - "--libreoffice-restart-after=10"
+      # Chromium is not needed for Office/PDF conversions — disable it
+      - "--chromium-disable-routes=true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ── Rupantar app ─────────────────────────────────────────────────────────────
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3001}:3001"
+    environment:
+      - PORT=3001
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - TWILIO_WHATSAPP_NUMBER=${TWILIO_WHATSAPP_NUMBER}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
+      - GOTENBERG_URL=http://gotenberg:3000
+      - REDIS_URL=${REDIS_URL:-}
+    depends_on:
+      gotenberg:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── Redis (optional — only needed if you switch session.js to use Redis) ───
+  # Uncomment this block and set REDIS_URL=redis://redis:6379 in your .env
+  # if you want Redis for session state instead of the default in-process Map.
+  #
+  # IMPORTANT: persistence is fully disabled here (no RDB, no AOF) so nothing
+  # is written to disk — it behaves as a pure in-memory cache that's wiped on
+  # restart, consistent with the zero-storage design.
+  #
+  # redis:
+  #   image: redis:7-alpine
+  #   restart: unless-stopped
+  #   command: >
+  #     redis-server
+  #     --save ""
+  #     --appendonly no
+  #     --maxmemory 128mb
+  #     --maxmemory-policy allkeys-lru
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
