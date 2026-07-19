@@ -18,7 +18,7 @@
 const SESSION_TTL_MS    = 10 * 60 * 1000; // 10 minutes
 const SWEEP_INTERVAL_MS = 60 * 1000;      // sweep every 60 seconds
 
-/** @type {Map<string, { buffer: Buffer, detectedType: string, expiresAt: number }>} */
+/** @type {Map<string, { buffer: Buffer, detectedType: string, expiresAt: number, originalFilename: string }>} */
 const sessions = new Map();
 
 let sweepTimer = null;
@@ -30,11 +30,13 @@ let sweepTimer = null;
  * @param {string} phoneNumber
  * @param {Buffer} buffer        — file content, held in RAM only
  * @param {string} detectedType  — 'docx' | 'xlsx' | 'pptx' | 'pdf'
+ * @param {string} originalFilename
  */
-function setSession(phoneNumber, buffer, detectedType) {
+function setSession(phoneNumber, buffer, detectedType, originalFilename) {
   sessions.set(phoneNumber, {
     buffer,
     detectedType,
+    originalFilename,
     expiresAt: Date.now() + SESSION_TTL_MS
   });
 }
@@ -43,7 +45,7 @@ function setSession(phoneNumber, buffer, detectedType) {
  * Retrieve a pending session. Returns null if not found or expired.
  *
  * @param {string} phoneNumber
- * @returns {{ buffer: Buffer, detectedType: string } | null}
+ * @returns {{ buffer: Buffer, detectedType: string, originalFilename: string } | null}
  */
 function getSession(phoneNumber) {
   const entry = sessions.get(phoneNumber);
@@ -52,7 +54,7 @@ function getSession(phoneNumber) {
     sessions.delete(phoneNumber);
     return null;
   }
-  return { buffer: entry.buffer, detectedType: entry.detectedType };
+  return { buffer: entry.buffer, detectedType: entry.detectedType, originalFilename: entry.originalFilename };
 }
 
 /**

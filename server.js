@@ -3,6 +3,7 @@
 require('dotenv').config();
 
 const express = require('express');
+const path = require('path');
 
 const { setSession, getSession, clearSession, startSweep: startSessionSweep } = require('./services/session');
 const { storeFile, consumeFile, startSweep: startEphemeralSweep }             = require('./services/ephemeralStore');
@@ -14,7 +15,7 @@ const {
   sendMedia,
   normalisePhone,
   formatPromptText
-} = require('./services/messaging');
+} = require('./services/messaging-meta');
 const { getConversionOptions, isValidConversion, targetFormatFromButtonId } = require('./lib/conversionMatrix');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -74,82 +75,60 @@ app.get('/file/:token', (req, res) => {
 
 // ─── WhatsApp webhook ─────────────────────────────────────────────────────────
 
-/**
- * POST /webhook/whatsapp
- *
- * Twilio calls this for every inbound WhatsApp message.
- * Body is application/x-www-form-urlencoded.
- *
- * Key fields:
- *   From          — sender's WhatsApp number, e.g. 'whatsapp:+919876543210'
- *   NumMedia      — count of attached media files
- *   MediaUrl0     — URL of the first media file (Twilio CDN)
- *   MediaContentType0 — MIME type Twilio detected (we re-detect via magic bytes)
- *   ButtonPayload — set when user taps a quick-reply button (Twilio's field name)
- *   ButtonText    — display text of the tapped button
- *
- * For Content API quick-replies, Twilio forwards:
- *   ButtonPayload containing the `id` we set (e.g. 'convert_pdf')
- */
+app.get('/webhook/whatsapp', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  if (mode === 'subscribe' && token === process.env.META_VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+  return res.sendStatus(403);
+});
+
 app.post('/webhook/whatsapp', async (req, res) => {
-  // Twilio expects a 200 with an empty TwiML body (or valid TwiML) promptly.
-  // We reply immediately and do the heavy lifting asynchronously so we don't
-  // time out Twilio's webhook delivery window.
-  res.set('Content-Type', 'text/xml');
-  res.send('<Response></Response>');
+  // Respond immediately to Meta
+  res.sendStatus(200);
 
   const body = req.body;
-
-  // Log the full incoming payload so we can see exactly what Twilio is sending
   console.log('[webhook] Incoming payload:', JSON.stringify(body, null, 2));
 
-  const from = normalisePhone(body.From);
+  const entry = body.entry?.[0];
+  const change = entry?.changes?.[0];
+  const message = change?.value?.messages?.[0];
 
-  if (!from) {
-    console.warn('[webhook] Received request with no From field — ignoring.');
-    return;
-  }
+  if (!message) return;
+
+  const from = normalisePhone(message.from);
 
   try {
-    const numMedia = parseInt(body.NumMedia || '0', 10);
-    const text     = (body.Body || '').trim();
+    console.log(`[webhook] From=${from} Type=${message.type}`);
 
-    console.log(`[webhook] From=${from} NumMedia=${numMedia} Body="${text}"`);
-
-    if (numMedia > 0) {
+    if (message.type === 'document' || message.type === 'image') {
       // ── User sent a file ────────────────────────────────────────────────
-      await handleIncomingMedia(from, body.MediaUrl0, body.MediaContentType0);
-    } else if (text) {
-      // ── User sent text — check if it's a number reply to our menu ───────
-      const session = require('./services/session').getSession(from);
-      console.log(`[webhook] session lookup for ${from}:`, session ? `found type=${session.detectedType}` : 'NOT FOUND');
-      if (session && /^[1-9]$/.test(text)) {
-        const options = getConversionOptions(session.detectedType);
-        const idx = parseInt(text, 10) - 1;
-        if (idx >= 0 && idx < options.length) {
-          await handleButtonReply(from, options[idx].id);
-        } else {
-          await sendText(from, `Please reply with a number between 1 and ${options.length}.`);
-        }
-      } else {
-        await sendText(
-          from,
-          "Hi, I'm Rupantar 👋 — send me a Word, Excel, PowerPoint, or PDF file and I'll convert it for you."
-        );
-      }
+      const media = message.document || message.image;
+      await handleIncomingMedia(from, media.id, media.mime_type, media.filename);
+    } else if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
+      // ── User tapped a button ────────────────────────────────────────────
+      const buttonReplyId = message.interactive.button_reply.id;
+      await handleButtonReply(from, buttonReplyId);
+    } else if (message.type === 'text') {
+      // ── User sent text ──────────────────────────────────────────────────
+      await sendText(
+        from,
+        "Hi, I'm Rupantar 👋 — send me a Word, Excel, PowerPoint, or PDF file and I'll convert it for you."
+      );
     }
   } catch (err) {
     console.error(`[webhook] Unhandled error for ${from}:`, err.message);
-    // Best-effort error reply to the user
     sendText(from, 'Something went wrong on my end — please try again.').catch(() => {});
   }
 });
 
 // ─── Handler: incoming media ──────────────────────────────────────────────────
 
-async function handleIncomingMedia(from, mediaUrl, _twilioMimeHint) {
-  console.log(`[handleIncomingMedia] from=${from} mediaUrl=${mediaUrl}`);
-  if (!mediaUrl) {
+async function handleIncomingMedia(from, mediaId, _mimeHint, originalFilename) {
+  console.log(`[handleIncomingMedia] from=${from} mediaId=${mediaId}`);
+  if (!mediaId) {
     await sendText(from, "I couldn't retrieve your file. Please try sending it again.");
     return;
   }
@@ -164,7 +143,7 @@ async function handleIncomingMedia(from, mediaUrl, _twilioMimeHint) {
   // 1. Download file from Twilio CDN into memory
   let buffer;
   try {
-    buffer = await downloadIncomingMedia(mediaUrl);
+    buffer = await downloadIncomingMedia(mediaId);
   } catch (err) {
     console.error('[handleIncomingMedia] Download failed:', err.message);
     await sendText(from, "I couldn't download your file. Please try again.");
@@ -200,7 +179,7 @@ async function handleIncomingMedia(from, mediaUrl, _twilioMimeHint) {
   }
 
   // 5. Store session (buffer lives in RAM here, key = phone number)
-  setSession(from, buffer, detectedType);
+  setSession(from, buffer, detectedType, originalFilename || `upload.${detectedType}`);
 
   // 6. Reply with interactive format-choice buttons
   const promptText = formatPromptText(detectedType);
@@ -259,7 +238,7 @@ async function handleButtonReply(from, buttonId) {
   clearSession(from);
 
   // 5. Store converted buffer in ephemeral map, get one-time token
-  const filename = `converted.${ext}`;
+  const filename = buildOutputFilename(session.originalFilename, ext);
   const token    = storeFile(convertedBuffer, mimeType, filename);
   convertedBuffer = null; // hand off ownership to the store; release local ref
 
