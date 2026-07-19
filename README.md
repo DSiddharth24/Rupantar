@@ -36,7 +36,7 @@ Bot:  [sends report.pdf]
 | Layer | Technology |
 |-------|-----------|
 | Runtime | Node.js 20 + Express |
-| Messaging | Twilio WhatsApp API (sandbox / WABA) |
+| Messaging | Meta WhatsApp Cloud API |
 | Conversion | [Gotenberg](https://gotenberg.dev) (Dockerized LibreOffice) |
 | File handling | Node `Buffer` only — never `fs.writeFile` |
 | Session state | In-memory `Map` with TTL sweep |
@@ -50,7 +50,7 @@ Bot:  [sends report.pdf]
 
 - Node.js ≥ 18
 - Docker (for Gotenberg)
-- A Twilio account with the WhatsApp Sandbox enabled
+- A Meta Business App with the WhatsApp product added
 - ngrok (local dev) or a server with a public domain (prod)
 
 ### 1 — Clone and install
@@ -71,9 +71,9 @@ Fill in `.env`:
 
 | Variable | Description |
 |----------|-------------|
-| `TWILIO_ACCOUNT_SID` | From the Twilio Console → Account Info |
-| `TWILIO_AUTH_TOKEN` | From the Twilio Console → Account Info |
-| `TWILIO_WHATSAPP_NUMBER` | `whatsapp:+14155238886` for sandbox |
+| `META_ACCESS_TOKEN` | System user long-lived token from Meta Business Manager |
+| `META_PHONE_NUMBER_ID` | From the WhatsApp API Setup page |
+| `META_VERIFY_TOKEN` | Your arbitrary string used for webhook GET verification |
 | `PUBLIC_BASE_URL` | Your public URL (ngrok URL in dev, real domain in prod) |
 | `GOTENBERG_URL` | `http://localhost:3000` if running Gotenberg separately; `http://gotenberg:3000` inside docker-compose |
 
@@ -101,18 +101,18 @@ npm run dev
 ngrok http 3001
 ```
 
-Copy the `https://...ngrok.io` URL into `PUBLIC_BASE_URL` in your `.env` and into the Twilio Sandbox webhook field:
+Copy the `https://...ngrok.io` URL into `PUBLIC_BASE_URL` in your `.env` and into the Meta App Dashboard webhook field:
 
 ```
 Webhook URL: https://abc123.ngrok.io/webhook/whatsapp
-HTTP method: POST
+Verify Token: (the value you set in META_VERIFY_TOKEN)
 ```
 
 > **Note:** the ngrok URL changes every time ngrok restarts. Use a fixed ngrok domain or a real domain for anything more than quick testing.
 
 ### 6 — Test it
 
-Join the Twilio Sandbox (send the join code from your phone), then send any `.docx`, `.xlsx`, `.pptx`, or `.pdf` file to the sandbox number.
+Message the test number registered in your Meta App, then send any `.docx`, `.xlsx`, `.pptx`, or `.pdf` file.
 
 ---
 
@@ -124,7 +124,7 @@ rupantar/
 ├── lib/
 │   └── conversionMatrix.js    # Source-of-truth conversion options
 ├── services/
-│   ├── messaging.js           # Provider-agnostic interface (Twilio impl)
+│   ├── messaging-meta.js      # Provider-agnostic interface (Meta impl)
 │   ├── convert.js             # Gotenberg wrapper (buffer in → buffer out)
 │   ├── session.js             # In-memory pending-upload store
 │   └── ephemeralStore.js      # In-memory one-time file-serving store
@@ -134,14 +134,7 @@ rupantar/
 └── README.md
 ```
 
-### Migrating away from Twilio (post-prototype)
 
-All Twilio calls are isolated in `services/messaging.js`. To switch to the Meta Cloud API directly:
-
-1. Create `services/messaging-meta.js` with the same exported function signatures:
-   `downloadIncomingMedia`, `sendText`, `sendButtons`, `sendMedia`, `normalisePhone`, `formatPromptText`.
-2. Change the `require('./services/messaging')` line in `server.js` to point at the new file.
-3. Nothing else changes.
 
 ---
 
@@ -153,14 +146,14 @@ Files are never written to disk, stored in a database, or sent to any third-part
 
 ### The one unavoidable caveat
 
-Twilio's WhatsApp API cannot accept a raw binary payload in a webhook response. To attach a file to an outbound message, Twilio must **fetch it from a public URL** on its own. This means the converted file has to be reachable at a URL for the few seconds Twilio takes to retrieve it.
+Meta's WhatsApp Cloud API expects media to be uploaded before sending, or fetched from a public URL. To attach a file to an outbound message, Meta fetches it from a public URL. This means the converted file has to be reachable at a URL for the few seconds Meta takes to retrieve it.
 
 **How Rupantar handles this without any storage bucket:**
 
 - After conversion, the converted `Buffer` is placed into a RAM-backed `Map` keyed by a random 48-character hex token (`crypto.randomBytes(24)`).
 - A route `GET /file/:token` is exposed on the same server. The token is unguessable (192 bits of entropy), so no authentication beyond the token itself is needed.
 - The buffer is **deleted immediately** after the first successful GET — one-time delivery.
-- A background sweep runs every 30 seconds and deletes any token that has passed its 2-minute TTL, covering the case where Twilio never fetches the file (failed delivery, user blocked the bot, network error).
+- A background sweep runs every 30 seconds and deletes any token that has passed its 2-minute TTL, covering the case where Meta never fetches the file (failed delivery, network error).
 - If the server restarts, everything in the map is gone — there is no durable copy anywhere.
 
 This is the closest thing to true zero-storage that is technically possible while still using Twilio's media-fetch model.
